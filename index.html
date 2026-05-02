@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Find available parking in Boston — garages, lots, and 600+ metered street segments." />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>ParkBoston — Real-time parking, real Boston data</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Instrument Serif for the display heading (editorial but modern), Geist for UI -->
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Animated background gradient mesh -->
+  <div class="bg-mesh" aria-hidden="true">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <!-- Grain overlay for texture -->
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- ============ HEADER ============ -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="#" class="brand">
+        <span class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#brandGrad)" />
+            <text x="16" y="22" text-anchor="middle" fill="#0a0a0f" font-family="Instrument Serif, serif" font-weight="400" font-size="20" font-style="italic">P</text>
+            <defs>
+              <linearGradient id="brandGrad" x1="0" y1="0" x2="32" y2="32">
+                <stop offset="0%" stop-color="#7dd3fc"/>
+                <stop offset="100%" stop-color="#f0abfc"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </span>
+        <span class="brand-name">ParkBoston</span>
+      </a>
+
+      <nav class="main-nav">
+        <a href="#search">Search</a>
+        <a href="#results">Results</a>
+        <a href="#about">About</a>
+      </nav>
+
+      <div class="header-cta">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-text">Live</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============ HERO ============ -->
+    <section class="hero" id="search">
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span class="badge-dot"></span>
+          <span>648 locations · Updated live</span>
+        </div>
+
+        <h1 class="hero-title">
+          Find parking in <em>Boston</em>.<br />
+          Skip the loop.
+        </h1>
+
+        <p class="hero-sub">
+          Real meter data, garage availability, and lot pricing — across 600+ Boston street segments and every major neighborhood.
+        </p>
+
+        <form class="search-form" id="searchForm" role="search">
+          <div class="search-shell">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/>
+              <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <input
+              type="search"
+              id="searchInput"
+              placeholder="Search Back Bay, Newbury Street, Faneuil Hall…"
+              aria-label="Search Boston neighborhoods, streets, or landmarks"
+              autocomplete="off"
+            />
+            <button type="submit" class="search-btn">
+              <span>Search</span>
+              <svg viewBox="0 0 24 24" fill="none" width="14" height="14" aria-hidden="true">
+                <path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="quick-chips">
+            <span class="chips-label">Popular:</span>
+            <button type="button" class="chip" data-chip="Back Bay">Back Bay</button>
+            <button type="button" class="chip" data-chip="North End">North End</button>
+            <button type="button" class="chip" data-chip="Seaport">Seaport</button>
+            <button type="button" class="chip" data-chip="Fenway">Fenway</button>
+            <button type="button" class="chip" data-chip="Downtown">Downtown</button>
+          </div>
+        </form>
+
+        <!-- Live stats strip -->
+        <div class="hero-stats">
+          <div class="stat">
+            <span class="stat-num" id="statSpots">648</span>
+            <span class="stat-label">Locations</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num" id="statNeighborhoods">12</span>
+            <span class="stat-label">Neighborhoods</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num" id="statMeters">6,955</span>
+            <span class="stat-label">Live meters</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RESULTS ============ -->
+    <section class="results-section" id="results">
+      <div class="results-inner">
+
+        <!-- Sticky filter bar -->
+        <aside class="filters">
+          <div class="filters-header">
+            <h2 class="filters-title">Filters</h2>
+            <button type="button" class="filter-reset" id="resetFilters">Reset</button>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label" for="typeFilter">Type</label>
+            <div class="seg-control" role="radiogroup" aria-label="Parking type">
+              <button type="button" class="seg-btn is-active" data-type="all">All</button>
+              <button type="button" class="seg-btn" data-type="garage">Garages</button>
+              <button type="button" class="seg-btn" data-type="lot">Lots</button>
+              <button type="button" class="seg-btn" data-type="street">Street</button>
+            </div>
+            <select id="typeFilter" hidden></select>
+          </div>
+
+          <div class="filter-group">
+            <div class="filter-label-row">
+              <label class="filter-label" for="priceFilter">Max price</label>
+              <span class="filter-value" id="priceValue">$30/hr</span>
+            </div>
+            <input type="range" id="priceFilter" class="filter-range" min="1" max="30" value="30" step="1" />
+          </div>
+
+          <div class="filter-group">
+            <div class="filter-label-row">
+              <label class="filter-label" for="distanceFilter">Max distance</label>
+              <span class="filter-value" id="distanceValue">5 mi</span>
+            </div>
+            <input type="range" id="distanceFilter" class="filter-range" min="0.5" max="5" value="5" step="0.5" />
+          </div>
+
+          <label class="toggle">
+            <input type="checkbox" id="availableOnly" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Available only</span>
+          </label>
+        </aside>
+
+        <div class="results-main">
+
+          <div class="results-header">
+            <div class="results-meta">
+              <h2 class="results-title">
+                <span id="resultCount">0</span>
+                <span class="results-label">spots near <em id="locationLabel">Boston Common</em></span>
+              </h2>
+            </div>
+
+            <div class="view-toggle">
+              <button class="view-btn is-active" data-view="list" aria-label="List view">
+                <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
+                  <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <span>List</span>
+              </button>
+              <button class="view-btn" data-view="map" aria-label="Map view">
+                <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
+                  <path d="M9 4 3 7v13l6-3 6 3 6-3V4l-6 3-6-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                  <path d="M9 4v13M15 7v13" stroke="currentColor" stroke-width="1.8"/>
+                </svg>
+                <span>Map</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- List view -->
+          <div class="results-list" id="resultsList"></div>
+
+          <div class="empty-state" id="emptyState" hidden>
+            <div class="empty-icon">⌕</div>
+            <p class="empty-title">No spots match these filters</p>
+            <p class="empty-sub">Try widening your price range or distance.</p>
+          </div>
+
+          <!-- Map view -->
+          <div class="results-map" id="resultsMap" hidden>
+            <div id="map"></div>
+          </div>
+
+          <!-- Pagination for list -->
+          <div class="pagination" id="pagination" hidden>
+            <button type="button" class="page-btn" id="loadMore">Load 30 more</button>
+            <span class="page-info" id="pageInfo">Showing 30 of 200</span>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ABOUT ============ -->
+    <section class="about" id="about">
+      <div class="about-inner">
+        <div class="about-text">
+          <p class="about-eyebrow">About</p>
+          <h2 class="about-title">Built on real Boston data.</h2>
+          <p class="about-body">
+            ParkBoston pulls together garage rates, public lots, and <strong>6,955 active street meters</strong> from City of Boston open data. The street meter map is aggregated into ~600 segments by block, so you can quickly spot where the meters are and how much they cost.
+          </p>
+          <p class="about-body">
+            No more circling. No more surprises. Just the spots, the rates, and how to get there.
+          </p>
+        </div>
+
+        <div class="about-grid">
+          <div class="about-card">
+            <div class="about-card-num">6,955</div>
+            <div class="about-card-label">Active street meters</div>
+          </div>
+          <div class="about-card">
+            <div class="about-card-num">14</div>
+            <div class="about-card-label">Garages & lots</div>
+          </div>
+          <div class="about-card">
+            <div class="about-card-num">12+</div>
+            <div class="about-card-label">Neighborhoods</div>
+          </div>
+          <div class="about-card">
+            <div class="about-card-num">$1.25</div>
+            <div class="about-card-label">Avg meter rate / hr</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ MODAL ============ -->
+  <div class="modal" id="detailModal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="document">
+      <button class="modal-close" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+          <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="footer-logo">P</span>
+        <span>ParkBoston</span>
+      </div>
+      <div class="footer-meta">
+        <span>© <span id="year"></span> · Demo project</span>
+        <span class="footer-divider">·</span>
+        <span>Meter data: City of Boston</span>
+        <span class="footer-divider">·</span>
+        <span>Map © OpenStreetMap</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="data.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
