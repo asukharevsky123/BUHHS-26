@@ -1,17 +1,17 @@
-# ParkBoston 🅿️
+# ParkBoston
 
-Real-time parking finder for Boston — combines curated garage/lot data with **6,955 active street meters** from City of Boston open data.
+Real-time parking finder for Boston — combines curated garage/lot data with 6,955 active street meters from City of Boston open data.
 
 ## Features
 
-- **648 parking locations** across 14 neighborhoods
-- **Search** by neighborhood, street, or landmark
-- **Smart filters** for type, max price, distance, and availability
-- **List & map views** with one-click toggle
-- **Pagination** for fast list loading (30 per page out of 648)
-- **Detail modal** with hours, capacity, features, and directions link
-- **Fully responsive**, mobile-first
-- **Modern dark UI** with glass-morphism, animated gradient mesh, and Instrument Serif × Geist typography
+- 648 parking locations across 14 neighborhoods
+- Search by neighborhood, street, or landmark
+- Smart filters for type, max price, distance, and availability
+- List & map views with one-click toggle
+- Pagination for fast list loading (30 per page out of 648)
+- Detail modal with hours, capacity, features, and directions link
+- Fully responsive, mobile-first
+- Modern dark UI with glass-morphism, animated gradient mesh, and Instrument Serif × Geist typography
 
 ## Data sources
 
@@ -46,7 +46,7 @@ npx serve .
 ## Deploying to GitHub Pages
 
 1. Push to a GitHub repo.
-2. **Settings → Pages → Deploy from a branch → main / root**.
+2. Settings → Pages → Deploy from a branch → main / root.
 3. Live at `https://<user>.github.io/<repo>/` in about a minute.
 
 No build step. No bundler. No backend.
