@@ -333,6 +333,39 @@ input:focus-visible, button:focus-visible {
 }
 #searchInput::placeholder { color: var(--text-faint); }
 
+/* Locate-me icon button — sits between input and search button */
+.locate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  color: var(--text-soft);
+  border-radius: var(--r-sm);
+  transition: all 0.2s;
+  margin-right: 0.25rem;
+}
+.locate-btn:hover {
+  background: var(--surface-hi);
+  color: var(--cyan);
+}
+.locate-btn.is-loading {
+  color: var(--cyan);
+  pointer-events: none;
+}
+.locate-btn.is-loading svg {
+  animation: spin 1s linear infinite;
+}
+.locate-btn.is-active {
+  color: var(--cyan);
+  background: rgba(125, 211, 252, 0.1);
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .search-btn {
   display: inline-flex;
   align-items: center;

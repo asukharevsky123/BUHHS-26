@@ -453,12 +453,91 @@
   }
 
   // -----------------------------------------------------
+  // GEOLOCATION — uses browser's built-in Geolocation API
+  // -----------------------------------------------------
+  // Boston bounding box — if the user is outside this, they'd see a useless
+  // empty state (no parking within 5 miles). We warn instead and fall back.
+  const BOSTON_BOUNDS = {
+    minLat: 42.20, maxLat: 42.45,
+    minLng: -71.25, maxLng: -70.95
+  };
+
+  function isInBoston(lat, lng) {
+    return lat >= BOSTON_BOUNDS.minLat && lat <= BOSTON_BOUNDS.maxLat &&
+           lng >= BOSTON_BOUNDS.minLng && lng <= BOSTON_BOUNDS.maxLng;
+  }
+
+  function requestUserLocation() {
+    const $btn = document.getElementById('locateBtn');
+    const $input = document.getElementById('searchInput');
+
+    if (!navigator.geolocation) {
+      alert('Your browser does not support location services.');
+      return;
+    }
+
+    // Show spinner state
+    $btn.classList.add('is-loading');
+
+    navigator.geolocation.getCurrentPosition(
+      // Success — got coordinates
+      position => {
+        $btn.classList.remove('is-loading');
+
+        const { latitude, longitude } = position.coords;
+
+        if (!isInBoston(latitude, longitude)) {
+          // User is outside the data coverage area
+          $btn.classList.remove('is-active');
+          alert("You appear to be outside of the Boston area. We'll show parking near Boston Common instead. Try searching for a specific neighborhood.");
+          return;
+        }
+
+        referencePoint = {
+          lat: latitude,
+          lng: longitude,
+          label: 'Your location'
+        };
+
+        // Clear the search box so it's clear we're using location, not a query
+        $input.value = '';
+        $btn.classList.add('is-active');
+
+        update();
+        document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+      // Error — denied, timeout, or unavailable
+      error => {
+        $btn.classList.remove('is-loading');
+
+        let message = 'Could not get your location.';
+        if (error.code === error.PERMISSION_DENIED) {
+          message = 'Location access denied. You can search by neighborhood instead.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          message = "Your location isn't available right now. Try searching by neighborhood.";
+        } else if (error.code === error.TIMEOUT) {
+          message = 'Location request timed out. Try again or search by neighborhood.';
+        }
+        alert(message);
+      },
+      // Options
+      {
+        enableHighAccuracy: false,  // Wi-Fi/IP positioning is plenty for parking
+        timeout: 8000,              // give up after 8 seconds
+        maximumAge: 300000          // accept cached positions up to 5 min old
+      }
+    );
+  }
+
+  // -----------------------------------------------------
   // EVENT WIRING
   // -----------------------------------------------------
   function init() {
     // Search form
     document.getElementById('searchForm').addEventListener('submit', e => {
       e.preventDefault();
+      // User is overriding the location — clear the active state on locate button
+      document.getElementById('locateBtn').classList.remove('is-active');
       handleSearch(document.getElementById('searchInput').value);
     });
 
@@ -467,9 +546,14 @@
       chip.addEventListener('click', () => {
         const q = chip.dataset.chip;
         document.getElementById('searchInput').value = q;
+        // User picked a chip — clear the active state on locate button
+        document.getElementById('locateBtn').classList.remove('is-active');
         handleSearch(q);
       });
     });
+
+    // Locate-me button — uses browser Geolocation API
+    document.getElementById('locateBtn').addEventListener('click', requestUserLocation);
 
     // Type segmented control
     document.querySelectorAll('.seg-btn').forEach(btn => {
