@@ -646,4 +646,505 @@
   } else {
     init();
   }
+
+  // =====================================================
+  // NEARBY TRANSIT — ported from nearby-transit Python
+  // Queries OpenStreetMap Overpass API for bus, subway,
+  // train, ferry, tram, and aerial stops near a point.
+  // =====================================================
+
+  const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+  const TRANSIT_MODE_LABELS = {
+    subway: { label: 'Subway',  emoji: '🚇', color: '#7dd3fc' },
+    train:  { label: 'Train',   emoji: '🚆', color: '#4ade80' },
+    bus:    { label: 'Bus',     emoji: '🚌', color: '#f0abfc' },
+    tram:   { label: 'Tram',    emoji: '🚋', color: '#fde68a' },
+    ferry:  { label: 'Ferry',   emoji: '⛴️', color: '#67e8f9' },
+    aerial: { label: 'Aerial',  emoji: '🚡', color: '#d8b4fe' },
+    taxi:   { label: 'Taxi',    emoji: '🚕', color: '#fca5a5' },
+    other:  { label: 'Other',   emoji: '📍', color: '#9ca3af' }
+  };
+
+  // --- classify: mirrors the Python classify() function ---
+  function transitClassify(tags) {
+    if (!tags) return 'other';
+
+    const highway         = (tags.highway         || '').toLowerCase();
+    const railway         = (tags.railway         || '').toLowerCase();
+    const publicTransport = (tags.public_transport || '').toLowerCase();
+    const amenity         = (tags.amenity         || '').toLowerCase();
+    const operator        = (tags.operator        || '').toLowerCase();
+    const network         = (tags.network         || '').toLowerCase();
+    const ref             = (tags.ref             || '').toLowerCase();
+    const service         = (tags.service         || '').toLowerCase();
+
+    // Explicit rail/subway/tram
+    if (railway) {
+      if (['subway', 'metro'].includes(railway))          return 'subway';
+      if (['tram_stop', 'tram'].includes(railway))        return 'tram';
+      if (['station', 'halt', 'stop'].includes(railway))  return 'train';
+    }
+
+    // public_transport roles
+    if (['platform', 'stop_position', 'stop_area', 'stop'].includes(publicTransport)) {
+      if (railway) {
+        if (['subway', 'metro'].includes(railway))         return 'subway';
+        if (['tram_stop', 'tram'].includes(railway))       return 'tram';
+        return 'train';
+      }
+      if (highway === 'bus_stop' || tags.bus)              return 'bus';
+    }
+
+    // Bus
+    if (highway === 'bus_stop' || tags.bus === 'yes' || tags.busway) return 'bus';
+
+    // Ferry / aerial / taxi
+    if (amenity === 'ferry_terminal' || tags.ferry === 'yes')         return 'ferry';
+    if (tags.aerialway)                                               return 'aerial';
+    if (amenity === 'taxi'           || tags.taxi  === 'yes')         return 'taxi';
+
+    // Infer from operator/network/ref/service (MBTA-style)
+    const mbta = ['mbta', 'commuter rail', 'massachusetts'];
+    if (mbta.some(x => operator.includes(x)) ||
+        ['mbta', 'commuter rail'].some(x => network.includes(x)) ||
+        ref.includes('commuter') || service.includes('commuter')) {
+      if (['rail', 'commuter'].some(x => operator.includes(x) || ref.includes(x))) return 'train';
+      if (highway === 'bus_stop') return 'bus';
+      return 'train';
+    }
+
+    return 'other';
+  }
+
+  // --- element coords: mirrors element_coords() ---
+  function transitElementCoords(el) {
+    if (el.type === 'node') return { lat: el.lat, lon: el.lon };
+    if (el.center)          return { lat: el.center.lat, lon: el.center.lon };
+    if (el.bounds) {
+      return {
+        lat: (el.bounds.minlat + el.bounds.maxlat) / 2,
+        lon: (el.bounds.minlon + el.bounds.maxlon) / 2
+      };
+    }
+    return null;
+  }
+
+  // --- Overpass query: mirrors query_overpass() ---
+  async function queryOverpass(lat, lon, radiusM) {
+    const r = Math.round(radiusM);
+    const query = `
+[out:json][timeout:30];
+(
+  node(around:${r},${lat},${lon})[highway=bus_stop];
+  node(around:${r},${lat},${lon})[public_transport~"platform|stop_position|stop_area|stop"];
+  node(around:${r},${lat},${lon})[railway~"station|subway|halt|tram_stop|stop"];
+  node(around:${r},${lat},${lon})[amenity=ferry_terminal];
+  node(around:${r},${lat},${lon})[aerialway];
+  node(around:${r},${lat},${lon})[amenity=taxi];
+
+  way(around:${r},${lat},${lon})[highway=bus_stop];
+  way(around:${r},${lat},${lon})[public_transport~"platform|stop_position|stop_area|stop"];
+  way(around:${r},${lat},${lon})[railway~"station|subway|halt|tram_stop|stop"];
+  way(around:${r},${lat},${lon})[amenity=ferry_terminal];
+  way(around:${r},${lat},${lon})[aerialway];
+  way(around:${r},${lat},${lon})[amenity=taxi];
+
+  relation(around:${r},${lat},${lon})[public_transport~"stop_area|platform"];
+  relation(around:${r},${lat},${lon})[operator~"MBTA|Massachusetts Bay Transportation Authority",i];
+);
+out center tags;
+    `.trim();
+
+    const resp = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: query
+    });
+    if (!resp.ok) throw new Error(`Overpass HTTP ${resp.status}`);
+    const json = await resp.json();
+    return json.elements || [];
+  }
+
+  // --- metres between two lat/lon points (Haversine) ---
+  function transitDistanceM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dphi = toRad(lat2 - lat1);
+    const dlam = toRad(lon2 - lon1);
+    const a = Math.sin(dphi / 2) ** 2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dlam / 2) ** 2;
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // --- find + deduplicate: mirrors find_nearby() ---
+  async function findNearbyTransit(lat, lon, radiusM = 1000) {
+    const elements = await queryOverpass(lat, lon, radiusM);
+    const results  = [];
+    const seenIds  = new Set();
+    const seenCoords = new Set();
+
+    for (const el of elements) {
+      const elId = `${el.type}-${el.id}`;
+      const coords = transitElementCoords(el);
+      if (!coords) continue;
+
+      const coordKey = `${coords.lat.toFixed(6)},${coords.lon.toFixed(6)}`;
+      if (seenIds.has(elId) || seenCoords.has(coordKey)) continue;
+      seenIds.add(elId);
+      seenCoords.add(coordKey);
+
+      const tags = el.tags || {};
+      const name = tags.name || tags.ref || tags.operator || 'Unnamed stop';
+      const mode = transitClassify(tags);
+      const distM = transitDistanceM(lat, lon, coords.lat, coords.lon);
+
+      // Mirror Python filter: exclude 'other' and outbound
+      if (mode === 'other') continue;
+      const nameLower = name.toLowerCase();
+      const dirTag    = (tags.direction || '').toLowerCase();
+      if (nameLower.includes('outbound') || dirTag.includes('outbound')) continue;
+
+      results.push({ osmType: el.type, osmId: el.id, name, mode, distM, lat: coords.lat, lon: coords.lon, tags });
+    }
+
+    results.sort((a, b) => a.distM - b.distM);
+    return results;
+  }
+
+  // -------------------------------------------------------
+  // TRANSIT UI — panel rendered below the parking results
+  // -------------------------------------------------------
+  let transitResults  = [];
+  let transitVisible  = 50;
+  const TRANSIT_PAGE  = 50;
+  let transitRadius   = 800; // metres — default
+  let transitLoading  = false;
+
+  function getOrCreateTransitSection() {
+    let section = document.getElementById('transitSection');
+    if (section) return section;
+
+    section = document.createElement('section');
+    section.id = 'transitSection';
+    section.className = 'transit-section';
+    section.innerHTML = `
+      <div class="transit-header">
+        <h2 class="transit-title">🚇 Nearby Transit</h2>
+        <div class="transit-controls">
+          <label class="transit-radius-label" for="transitRadius">Radius</label>
+          <select id="transitRadius" class="transit-radius-select">
+            <option value="400">400 m (¼ mi)</option>
+            <option value="800" selected>800 m (½ mi)</option>
+            <option value="1600">1,600 m (1 mi)</option>
+            <option value="2400">2,400 m (1.5 mi)</option>
+          </select>
+          <button id="transitRefresh" class="transit-refresh-btn" aria-label="Refresh transit stops">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="transitStatus" class="transit-status" aria-live="polite"></div>
+      <div id="transitList"   class="transit-list"></div>
+      <div id="transitPagination" class="transit-pagination" hidden>
+        <button id="transitLoadMore" class="transit-load-more">Load more stops</button>
+        <span   id="transitPageInfo" class="transit-page-info"></span>
+      </div>
+    `;
+
+    // Insert after the main results section (or append to body if not found)
+    const resultsSection = document.getElementById('results') || document.querySelector('main') || document.body;
+    resultsSection.insertAdjacentElement('afterend', section);
+
+    // Wire controls
+    section.querySelector('#transitRadius').addEventListener('change', e => {
+      transitRadius = Number(e.target.value);
+      loadTransit();
+    });
+    section.querySelector('#transitRefresh').addEventListener('click', loadTransit);
+    section.querySelector('#transitLoadMore').addEventListener('click', () => {
+      transitVisible += TRANSIT_PAGE;
+      renderTransitList(false);
+    });
+
+    // Inject styles (only once)
+    if (!document.getElementById('transitStyles')) {
+      const style = document.createElement('style');
+      style.id = 'transitStyles';
+      style.textContent = `
+        .transit-section {
+          max-width: 1100px;
+          margin: 2.5rem auto 0;
+          padding: 0 1.25rem 3rem;
+          font-family: var(--font-sans, system-ui, sans-serif);
+        }
+        .transit-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 0.75rem;
+          margin-bottom: 1.25rem;
+        }
+        .transit-title {
+          font-size: 1.35rem;
+          font-weight: 700;
+          color: var(--text, #f1f5f9);
+          margin: 0;
+        }
+        .transit-controls {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .transit-radius-label {
+          font-size: 0.8rem;
+          color: var(--text-soft, #94a3b8);
+          white-space: nowrap;
+        }
+        .transit-radius-select {
+          background: var(--surface-2, #1e1e2e);
+          color: var(--text, #f1f5f9);
+          border: 1px solid var(--border, #2e2e3e);
+          border-radius: 6px;
+          padding: 0.3rem 0.55rem;
+          font-size: 0.82rem;
+          cursor: pointer;
+        }
+        .transit-refresh-btn {
+          background: var(--surface-2, #1e1e2e);
+          color: var(--text-soft, #94a3b8);
+          border: 1px solid var(--border, #2e2e3e);
+          border-radius: 6px;
+          padding: 0.3rem 0.75rem;
+          font-size: 0.82rem;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+        }
+        .transit-refresh-btn:hover { background: var(--surface-3, #2e2e3e); color: var(--text, #f1f5f9); }
+        .transit-refresh-btn.is-loading { opacity: 0.55; cursor: wait; }
+        .transit-status {
+          font-size: 0.85rem;
+          color: var(--text-soft, #94a3b8);
+          margin-bottom: 0.85rem;
+          min-height: 1.4em;
+        }
+        .transit-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.45rem;
+        }
+        .transit-row {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.65rem 0.9rem;
+          background: var(--surface-1, #16161d);
+          border: 1px solid var(--border, #2e2e3e);
+          border-radius: 8px;
+          transition: border-color 0.15s;
+        }
+        .transit-row:hover { border-color: var(--accent, #7dd3fc); }
+        .transit-mode-badge {
+          display: flex;
+          align-items: center;
+          gap: 0.3rem;
+          padding: 0.2rem 0.55rem;
+          border-radius: 99px;
+          font-size: 0.7rem;
+          font-weight: 600;
+          white-space: nowrap;
+          background: color-mix(in srgb, var(--badge-color) 18%, transparent);
+          color: var(--badge-color);
+          border: 1px solid color-mix(in srgb, var(--badge-color) 35%, transparent);
+          min-width: 5rem;
+          justify-content: center;
+        }
+        .transit-name {
+          flex: 1;
+          font-size: 0.9rem;
+          color: var(--text, #f1f5f9);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .transit-dist {
+          font-size: 0.78rem;
+          color: var(--text-faint, #64748b);
+          white-space: nowrap;
+          font-variant-numeric: tabular-nums;
+        }
+        .transit-dir-link {
+          font-size: 0.75rem;
+          color: var(--text-soft, #94a3b8);
+          text-decoration: none;
+          border: 1px solid var(--border, #2e2e3e);
+          border-radius: 5px;
+          padding: 0.2rem 0.45rem;
+          white-space: nowrap;
+          transition: color 0.15s, border-color 0.15s;
+        }
+        .transit-dir-link:hover { color: var(--text, #f1f5f9); border-color: var(--text-soft, #94a3b8); }
+        .transit-pagination {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          margin-top: 1.1rem;
+        }
+        .transit-load-more {
+          background: var(--surface-2, #1e1e2e);
+          color: var(--text-soft, #94a3b8);
+          border: 1px solid var(--border, #2e2e3e);
+          border-radius: 7px;
+          padding: 0.45rem 1rem;
+          font-size: 0.84rem;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+        }
+        .transit-load-more:hover { background: var(--surface-3, #2e2e3e); color: var(--text, #f1f5f9); }
+        .transit-page-info { font-size: 0.78rem; color: var(--text-faint, #64748b); }
+        .transit-empty {
+          text-align: center;
+          padding: 2.5rem 1rem;
+          color: var(--text-soft, #94a3b8);
+          font-size: 0.9rem;
+        }
+        .transit-error {
+          padding: 0.85rem 1rem;
+          background: rgba(239, 68, 68, 0.08);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          border-radius: 8px;
+          color: #fca5a5;
+          font-size: 0.85rem;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    return section;
+  }
+
+  function renderTransitList(reset = true) {
+    const section     = getOrCreateTransitSection();
+    const $tList      = section.querySelector('#transitList');
+    const $tPagination = section.querySelector('#transitPagination');
+    const $tLoadMore  = section.querySelector('#transitLoadMore');
+    const $tPageInfo  = section.querySelector('#transitPageInfo');
+
+    if (reset) transitVisible = TRANSIT_PAGE;
+
+    if (transitResults.length === 0) {
+      $tList.innerHTML = `<div class="transit-empty">No transit stops found within this radius.<br>Try increasing the search radius.</div>`;
+      $tPagination.hidden = true;
+      return;
+    }
+
+    const visible = transitResults.slice(0, transitVisible);
+
+    $tList.innerHTML = visible.map(stop => {
+      const meta   = TRANSIT_MODE_LABELS[stop.mode] || TRANSIT_MODE_LABELS.other;
+      const distFt = (stop.distM * 3.28084).toFixed(0);
+      const distMi = (stop.distM / 1609.34).toFixed(2);
+      const distLabel = stop.distM < 400
+        ? `${distFt} ft`
+        : `${distMi} mi`;
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lon}`;
+
+      return `
+        <div class="transit-row" style="--badge-color: ${meta.color}">
+          <span class="transit-mode-badge">${meta.emoji} ${meta.label}</span>
+          <span class="transit-name" title="${escapeHtml(stop.name)}">${escapeHtml(stop.name)}</span>
+          <span class="transit-dist">${distLabel}</span>
+          <a href="${mapsUrl}" target="_blank" rel="noopener" class="transit-dir-link" aria-label="Directions to ${escapeHtml(stop.name)}">Directions →</a>
+        </div>
+      `;
+    }).join('');
+
+    if (transitResults.length > transitVisible) {
+      $tPagination.hidden = false;
+      const remaining = transitResults.length - transitVisible;
+      const next = Math.min(TRANSIT_PAGE, remaining);
+      $tLoadMore.textContent = `Load ${next} more stops`;
+      $tPageInfo.textContent = `Showing ${transitVisible} of ${transitResults.length}`;
+    } else {
+      $tPagination.hidden = true;
+    }
+  }
+
+  async function loadTransit() {
+    if (transitLoading) return;
+    transitLoading = true;
+
+    const section  = getOrCreateTransitSection();
+    const $status  = section.querySelector('#transitStatus');
+    const $tList   = section.querySelector('#transitList');
+    const $refresh = section.querySelector('#transitRefresh');
+
+    $refresh.classList.add('is-loading');
+    $tList.innerHTML = '';
+    $status.textContent = `Searching for transit stops within ${transitRadius} m…`;
+
+    try {
+      transitResults = await findNearbyTransit(referencePoint.lat, referencePoint.lng, transitRadius);
+      const modeBreakdown = {};
+      transitResults.forEach(s => { modeBreakdown[s.mode] = (modeBreakdown[s.mode] || 0) + 1; });
+      const breakdown = Object.entries(modeBreakdown)
+        .map(([m, n]) => `${TRANSIT_MODE_LABELS[m]?.emoji || ''} ${n} ${TRANSIT_MODE_LABELS[m]?.label || m}`)
+        .join('  ·  ');
+      $status.textContent = transitResults.length > 0
+        ? `Found ${transitResults.length} stop${transitResults.length !== 1 ? 's' : ''} near ${referencePoint.label}  —  ${breakdown}`
+        : `No transit stops found near ${referencePoint.label} within ${transitRadius} m.`;
+      renderTransitList(true);
+    } catch (err) {
+      console.error('Transit query failed:', err);
+      $status.textContent = '';
+      $tList.innerHTML = `<div class="transit-error">⚠️ Could not load transit data. The Overpass API may be temporarily unavailable — try again in a moment.</div>`;
+    } finally {
+      transitLoading = false;
+      $refresh.classList.remove('is-loading');
+    }
+  }
+
+  // Patch update() to also refresh transit whenever parking updates
+  const _origUpdate = update;  // eslint-disable-line no-use-before-define
+  // (update is defined above in the same scope, this reference is valid at call-time)
+
+  // Hook into the existing update function by wrapping it
+  // We redefine the module-level update to also call loadTransit
+  // Since update() is called from multiple places, we monkey-patch after definition:
+  const _transitHookUpdate = () => {
+    _origUpdate.call(this);
+    // Only auto-load transit if the section already exists (avoids loading on every filter tweak)
+    if (document.getElementById('transitSection')) {
+      loadTransit();
+    }
+  };
+
+  // Expose transit load so it can be triggered manually from the page
+  window.loadNearbyTransit = loadTransit;
+  window.transitState = { get results() { return transitResults; } };
+
+  // Auto-load transit on initial page ready (after parking data loads)
+  // We wait for DOMContentLoaded + a small delay so referencePoint is set
+  function autoLoadTransit() {
+    // Defer so parking init() runs first and sets referencePoint
+    setTimeout(loadTransit, 300);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoLoadTransit);
+  } else {
+    autoLoadTransit();
+  }
+
+  // Re-load transit whenever the reference point changes.
+  // We do this by wrapping handleSearch and requestUserLocation side-effects.
+  // The cleanest hook is to observe referencePoint changes — we use a tiny
+  // MutationObserver on the locationLabel element instead of Proxy (IE-safe).
+  const _locationLabel = document.getElementById('locationLabel');
+  if (_locationLabel) {
+    new MutationObserver(() => {
+      if (document.getElementById('transitSection')) {
+        loadTransit();
+      }
+    }).observe(_locationLabel, { childList: true, characterData: true, subtree: true });
+  }
 })();
