@@ -1,0 +1,1 @@
+This project is meant to help people find parking in Boston, as it is often very difficult to do so. It will help cut down on carbon emissions, as people will have to spend less time parking, therefore spending less time driving.
